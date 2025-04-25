@@ -13,6 +13,7 @@ library(splitTools)
 library(patchwork)
 library(car)
 library(knitr)
+library(caret)
 
 
 # Read the data
@@ -384,5 +385,303 @@ print(final_metrics)
 anova_test <- anova(final_model)
 print(anova_test)
 
+# K-fold cross-validation on cleaned training data
+set.seed(123)
+train_control <- trainControl(method = "cv", number = 10)
+cv_model <- train(
+  formula(final_model), 
+  data = train_clean,
+  method = "lm",
+  trControl = train_control
+)
+# View results
+print(cv_model$results)
+
+ncol(train_clean)
+nrow(train_clean)
+
+# Get predictor names from final model (excluding intercept)
+required_predictors <- names(coef(final_model))[-1]  # -1 removes intercept
+cat("Required predictors (32):", required_predictors)
+
+summary(valid_standardized)
+ncol(valid_standardized)
+
+# 1. Add required polynomial/interaction terms
+valid_standardized$GDP_per_capita_sq <- valid_standardized$GDP_per_capita^2
+valid_standardized$BMI_sq <- valid_standardized$BMI^2
+valid_standardized$Thinness_five_nine_years_sq <- valid_standardized$Thinness_five_nine_years^2
+valid_standardized$Adult_mortality_sq <- valid_standardized$Adult_mortality^2
+valid_standardized$Schooling_sq <- valid_standardized$Schooling^2
+
+valid_standardized$GDP_Schooling <- valid_standardized$GDP_per_capita * valid_standardized$Schooling
+valid_standardized$GDP_Adult_mortality <- valid_standardized$GDP_per_capita * valid_standardized$Adult_mortality
+valid_standardized$BMI_Developed <- valid_standardized$BMI * valid_standardized$Economy_status_Developed
+valid_standardized$HIV_GDP <- valid_standardized$Incidents_HIV * valid_standardized$GDP_per_capita
+valid_standardized$Year_Adult_mortality <- valid_standardized$Year * valid_standardized$Adult_mortality
+valid_standardized$Year_GDP <- valid_standardized$Year * valid_standardized$GDP_per_capita
+valid_standardized$Adult_mortality_Developed <- valid_standardized$Adult_mortality * valid_standardized$Economy_status_Developed
+valid_standardized$Adult_mortality_sq_Schooling <- valid_standardized$Adult_mortality_sq * valid_standardized$Schooling
+valid_standardized$Schooling_sq_GDP <- valid_standardized$Schooling_sq * valid_standardized$GDP_per_capita
+
+# 2. Harmonize column names (DO THIS ONCE)
+required_predictors <- gsub("`", "", names(coef(final_model))[-1])
+names(valid_standardized) <- gsub("`", "", names(valid_standardized))
+
+# 3. Subset validation data (DO THIS ONCE)
+valid_final <- valid_standardized[, c("Life_expectancy", required_predictors)]
+
+ncol(valid_final)
+
+# 4. Predict and calculate metrics (DO THIS ONCE)
+valid_pred <- predict(final_model, newdata = valid_final)
+valid_rmse <- sqrt(mean((valid_final$Life_expectancy - valid_pred)^2))
+valid_r2 <- cor(valid_pred, valid_final$Life_expectancy)^2
+
+cat("Validation RMSE:", round(valid_rmse, 4), "\n")
+cat("Validation R-squared:", round(valid_r2, 4), "\n")
 
 
+
+# --------------------------
+# TEST DATA PREPARATION
+# --------------------------
+
+# A. Add polynomial terms (same as training/validation)
+test_standardized <- test_standardized %>%
+  mutate(
+    GDP_per_capita_sq = GDP_per_capita^2,
+    BMI_sq = BMI^2,
+    Thinness_five_nine_years_sq = Thinness_five_nine_years^2,
+    Adult_mortality_sq = Adult_mortality^2,
+    Schooling_sq = Schooling^2
+  )
+
+# B. Add interaction terms (same as training/validation)
+test_standardized <- test_standardized %>%
+  mutate(
+    GDP_Schooling = GDP_per_capita * Schooling,
+    GDP_Adult_mortality = GDP_per_capita * Adult_mortality,
+    BMI_Developed = BMI * Economy_status_Developed,
+    HIV_GDP = Incidents_HIV * GDP_per_capita,
+    Year_Adult_mortality = Year * Adult_mortality,
+    Year_GDP = Year * GDP_per_capita,
+    Adult_mortality_Developed = Adult_mortality * Economy_status_Developed,
+    Adult_mortality_sq_Schooling = Adult_mortality_sq * Schooling,
+    Schooling_sq_GDP = Schooling_sq * GDP_per_capita
+  )
+
+# C. Harmonize column names (remove backticks)
+names(test_standardized) <- gsub("`", "", names(test_standardized))
+
+# D. Subset to final model's required predictors
+required_predictors <- gsub("`", "", names(coef(final_model))[-1])
+test_final <- test_standardized[, c("Life_expectancy", required_predictors)]
+
+# E. Verify alignment
+cat("Test dimensions:", dim(test_final), "\n")
+cat("Missing predictors:", setdiff(required_predictors, names(test_final)), "\n")
+
+# Predict
+test_pred <- predict(final_model, newdata = test_final)
+
+# Metrics
+test_rmse <- sqrt(mean((test_final$Life_expectancy - test_pred)^2))
+test_r2 <- cor(test_pred, test_final$Life_expectancy)^2
+
+cat("\nFinal Test Performance:\n")
+cat("RMSE:", round(test_rmse, 4), "\n")
+cat("R-squared:", round(test_r2, 4), "\n")
+
+
+vif(final_model)  # Values >5-10 indicate problematic multicollinearity
+summary(final_model)
+
+
+
+
+
+
+
+
+
+# Check for aliased coefficients
+alias_info <- alias(final_model)
+if (!is.null(alias_info$Complete)) {
+  aliased_vars <- rownames(alias_info$Complete)
+  cat("Aliased variables detected:", aliased_vars, "\n")
+  
+  # Remove aliased variables and refit model
+  predictors <- setdiff(names(coef(final_model))[-1], aliased_vars)
+  formula_str <- paste("Life_expectancy ~", paste(predictors, collapse = "+"))
+  final_model_clean <- lm(formula_str, data = train_clean)
+} else {
+  cat("No aliased variables detected.\n")
+}
+# View cleaned model summary
+summary(final_model_clean)
+
+# Calculate VIF for the cleaned model
+library(car)
+vif(final_model_clean)
+
+# Function to iteratively remove variables with VIF > threshold
+reduce_vif <- function(model, threshold = 10) {
+  vif_values <- car::vif(model)
+  while (any(vif_values > threshold)) {
+    max_vif_var <- names(which.max(vif_values))
+    cat("Removing variable with high VIF:", max_vif_var, "VIF:", max(vif_values), "\n")
+    predictors <- setdiff(names(coef(model))[-1], max_vif_var)
+    formula_str <- paste("Life_expectancy ~", paste(predictors, collapse = "+"))
+    model <- lm(formula_str, data = train_clean)
+    vif_values <- car::vif(model)
+  }
+  return(model)
+}
+
+# Apply to cleaned model
+final_model_reduced <- reduce_vif(final_model_clean)
+summary(final_model_reduced)
+vif(final_model_reduced)
+
+
+
+# Polynomial terms
+test_standardized$GDP_per_capita_sq <- test_standardized$GDP_per_capita^2
+test_standardized$BMI_sq <- test_standardized$BMI^2
+test_standardized$Thinness_five_nine_years_sq <- test_standardized$Thinness_five_nine_years^2
+test_standardized$Adult_mortality_sq <- test_standardized$Adult_mortality^2
+test_standardized$Schooling_sq <- test_standardized$Schooling^2
+
+# Interaction terms
+test_standardized$BMI_Developed <- test_standardized$BMI * test_standardized$Economy_status_Developed
+test_standardized$Year_Adult_mortality <- test_standardized$Year * test_standardized$Adult_mortality
+test_standardized$Adult_mortality_Developed <- test_standardized$Adult_mortality * test_standardized$Economy_status_Developed
+test_standardized$Adult_mortality_sq_Schooling <- test_standardized$Adult_mortality_sq * test_standardized$Schooling
+test_standardized$Schooling_sq_GDP <- test_standardized$Schooling_sq * test_standardized$GDP_per_capita
+
+
+required_predictors <- names(coef(final_model_reduced))[-1]  # Exclude intercept
+test_final <- test_standardized[, c("Life_expectancy", required_predictors)]
+
+ncol(test_standardized)
+# Get predictors from the reduced model
+required_predictors <- names(coef(final_model_reduced))[-1]
+
+# Compare with test dataset columns
+missing_cols <- setdiff(required_predictors, names(test_standardized))
+cat("Missing columns in test data:", missing_cols, "\n")
+
+
+# --------------------------
+# STEP 1: List and Compare Columns
+# --------------------------
+
+# Get column names from test data
+test_cols <- names(test_standardized)
+cat("Test dataset columns (", length(test_cols), "):\n", paste(test_cols, collapse = ", "), "\n\n")
+
+# Get predictor names from final model (excluding intercept)
+model_cols <- names(coef(final_model_reduced))[-1]
+cat("Model predictors (", length(model_cols), "):\n", paste(model_cols, collapse = ", "), "\n\n")
+
+# --------------------------
+# STEP 2: Identify Mismatches
+# --------------------------
+
+# Find missing columns in test data
+missing_cols <- setdiff(model_cols, test_cols)
+cat("Missing columns in test data:\n", paste(missing_cols, collapse = ", "), "\n\n")
+
+# Find extra columns in test data
+extra_cols <- setdiff(test_cols, c("Life_expectancy", model_cols))
+cat("Extra columns in test data:\n", paste(extra_cols, collapse = ", "), "\n\n")
+
+# --------------------------
+# STEP 3: Fix Column Issues
+# --------------------------
+
+# Add missing columns (set to 0 for dummy variables)
+for(col in missing_cols) {
+  if(grepl("Region", col)) {
+    # Handle region dummy variables
+    test_standardized[[col]] <- 0
+    cat("Added region dummy:", col, "\n")
+  } else {
+    # Handle other terms (polynomials/interactions)
+    test_standardized[[col]] <- test_standardized[[
+      gsub("_sq|_GDP|_Schooling|_Developed|_sq_Schooling", "", col)
+    ]]^ifelse(grepl("_sq", col), 2, 1)
+    cat("Added derived term:", col, "\n")
+  }
+}
+
+# Remove extra columns
+test_standardized <- test_standardized[, !(names(test_standardized) %in% extra_cols)]
+
+# --------------------------
+# STEP 4: Create Final Test Set
+# --------------------------
+
+# Verify target variable exists
+if(!"Life_expectancy" %in% names(test_standardized)) {
+  stop("Life_expectancy column missing in test data!")
+}
+
+# Create final test dataset
+test_final <- test_standardized[, c("Life_expectancy", model_cols)]
+
+# --------------------------
+# STEP 5: Final Verification
+# --------------------------
+
+cat("\nFinal test dataset structure:\n")
+str(test_final[, 1:5])  # Show first 5 columns for preview
+
+cat("\nMissing columns after fix:", setdiff(model_cols, names(test_final)), "\n")
+cat("Extra columns after fix:", setdiff(names(test_final), c("Life_expectancy", model_cols)), "\n")
+
+
+ncol(test_final)
+
+
+# Print column names in test data
+cat("Test columns:", names(test_final), "\n")
+
+# Check for the problematic region column
+"Region_Central America and Caribbean" %in% names(test_final)
+
+# Remove backticks from region columns (if present)
+names(test_final) <- gsub("`", "", names(test_final))
+
+# Add missing region columns (if absent)
+missing_regions <- setdiff(
+  c("Region_Central America and Caribbean", 
+    "Region_European Union", 
+    "Region_Rest of Europe", 
+    "Region_South America"),
+  names(test_final)
+)
+
+if (length(missing_regions) > 0) {
+  test_final[missing_regions] <- 0  # Add zero-filled columns
+  cat("Added missing regions:", missing_regions, "\n")
+}
+test_pred <- predict(final_model_reduced, newdata = test_final)
+
+# Metrics
+test_rmse <- sqrt(mean((test_final$Life_expectancy - test_pred)^2))
+test_r2 <- cor(test_pred, test_final$Life_expectancy)^2
+
+cat("\nFinal Test Performance:\n")
+cat("RMSE:", round(test_rmse, 4), "\n")
+cat("R-squared:", round(test_r2, 4), "\n")
+
+ncol(test_final)
+
+summary(final_model_reduced)
+summary(test_final)
+
+test_final$`Region_North America` <- NULL
+summary(test_final)
+ncol(test_final)

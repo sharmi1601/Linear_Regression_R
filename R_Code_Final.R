@@ -1,5 +1,4 @@
 #load the libraries
-
 library(tidyverse)
 library(caret)
 library(car)
@@ -14,7 +13,6 @@ library(patchwork)
 library(car)
 library(knitr)
 library(caret)
-
 
 # Read the data
 data <- read.csv("C:/Users/sharm/OneDrive/Desktop/MS/Semester - 2/Linear Regression and Time Series/Final_Project_Sem-2/Life-Expectancy-Data.csv")
@@ -35,7 +33,6 @@ ggplot(data, aes(Year, Life_expectancy)) +
   geom_point() + 
   geom_smooth(method = "lm", se = FALSE)
 # As there is approximate linear trend in between Year and Life_expectancy we can leave Year column as Numeric
-
 # Create dummy variables for 'Region', dropping the first category to avoid multicollinearity
 data <- dummy_cols(data, select_columns = "Region", remove_first_dummy = TRUE)
 
@@ -102,7 +99,6 @@ cols_to_standardize <- names(train)[
 train_standardized <- train
 train_standardized[cols_to_standardize] <- scale(train[cols_to_standardize])
 
-
 # Calculate means and standard deviations from the training data
 # (We need to store these to apply to validation and test sets)
 train_means <- colMeans(train[cols_to_standardize])
@@ -130,9 +126,7 @@ summary(train_standardized)
 ggplot(train, aes(x = Life_expectancy)) +
   geom_density(fill = "skyblue", alpha = 0.7) +
   labs(title = "Density Plot of Life Expectancy", x = "Life Expectancy", y = "Density")
-
 ncol(train_standardized)
-
 # Creating Interaction Terms and Quadratic Terms
 # 1. Basic Polynomial (Quadratic) Terms
 train_standardized$GDP_per_capita_sq <- train_standardized$GDP_per_capita^2
@@ -258,7 +252,6 @@ manual_feature_selection <- function(data, target_var) {
 result <- manual_feature_selection(train_standardized, "Life_expectancy")
 summary(result$final_model)
 
-
 # Comparison of the all feature selection models
 # Function to calculate metrics for comparison
 get_model_stats <- function(model, model_name, train_data) {
@@ -289,7 +282,6 @@ comparison_table <- rbind(
 kable(comparison_table, align = 'c', caption = "Model Comparison")
 
 # Now Final Model Selection
-
 # STEP 1: Select the best model from comparison
 selected_model <- backward_model
 
@@ -335,7 +327,6 @@ refined_model <- refinement(selected_model)
 summary(refined_model)
 length(coef(refined_model))
 
-
 # STEP 3: Handle influential observations
 
 infl <- influence.measures(refined_model)
@@ -378,7 +369,6 @@ final_metrics <- data.frame(
   Predictors = length(coef(final_model)) - 1,
   Observations = nrow(train_clean)
 )
-
 print(final_metrics)
 
 # STEP 5: ANOVA test
@@ -441,70 +431,6 @@ valid_r2 <- cor(valid_pred, valid_final$Life_expectancy)^2
 cat("Validation RMSE:", round(valid_rmse, 4), "\n")
 cat("Validation R-squared:", round(valid_r2, 4), "\n")
 
-
-
-# --------------------------
-# TEST DATA PREPARATION
-# --------------------------
-
-# A. Add polynomial terms (same as training/validation)
-test_standardized <- test_standardized %>%
-  mutate(
-    GDP_per_capita_sq = GDP_per_capita^2,
-    BMI_sq = BMI^2,
-    Thinness_five_nine_years_sq = Thinness_five_nine_years^2,
-    Adult_mortality_sq = Adult_mortality^2,
-    Schooling_sq = Schooling^2
-  )
-
-# B. Add interaction terms (same as training/validation)
-test_standardized <- test_standardized %>%
-  mutate(
-    GDP_Schooling = GDP_per_capita * Schooling,
-    GDP_Adult_mortality = GDP_per_capita * Adult_mortality,
-    BMI_Developed = BMI * Economy_status_Developed,
-    HIV_GDP = Incidents_HIV * GDP_per_capita,
-    Year_Adult_mortality = Year * Adult_mortality,
-    Year_GDP = Year * GDP_per_capita,
-    Adult_mortality_Developed = Adult_mortality * Economy_status_Developed,
-    Adult_mortality_sq_Schooling = Adult_mortality_sq * Schooling,
-    Schooling_sq_GDP = Schooling_sq * GDP_per_capita
-  )
-
-# C. Harmonize column names (remove backticks)
-names(test_standardized) <- gsub("`", "", names(test_standardized))
-
-# D. Subset to final model's required predictors
-required_predictors <- gsub("`", "", names(coef(final_model))[-1])
-test_final <- test_standardized[, c("Life_expectancy", required_predictors)]
-
-# E. Verify alignment
-cat("Test dimensions:", dim(test_final), "\n")
-cat("Missing predictors:", setdiff(required_predictors, names(test_final)), "\n")
-
-# Predict
-test_pred <- predict(final_model, newdata = test_final)
-
-# Metrics
-test_rmse <- sqrt(mean((test_final$Life_expectancy - test_pred)^2))
-test_r2 <- cor(test_pred, test_final$Life_expectancy)^2
-
-cat("\nFinal Test Performance:\n")
-cat("RMSE:", round(test_rmse, 4), "\n")
-cat("R-squared:", round(test_r2, 4), "\n")
-
-
-vif(final_model)  # Values >5-10 indicate problematic multicollinearity
-summary(final_model)
-
-
-
-
-
-
-
-
-
 # Check for aliased coefficients
 alias_info <- alias(final_model)
 if (!is.null(alias_info$Complete)) {
@@ -522,7 +448,6 @@ if (!is.null(alias_info$Complete)) {
 summary(final_model_clean)
 
 # Calculate VIF for the cleaned model
-library(car)
 vif(final_model_clean)
 
 # Function to iteratively remove variables with VIF > threshold
@@ -544,8 +469,6 @@ final_model_reduced <- reduce_vif(final_model_clean)
 summary(final_model_reduced)
 vif(final_model_reduced)
 
-
-
 # Polynomial terms
 test_standardized$GDP_per_capita_sq <- test_standardized$GDP_per_capita^2
 test_standardized$BMI_sq <- test_standardized$BMI^2
@@ -560,9 +483,8 @@ test_standardized$Adult_mortality_Developed <- test_standardized$Adult_mortality
 test_standardized$Adult_mortality_sq_Schooling <- test_standardized$Adult_mortality_sq * test_standardized$Schooling
 test_standardized$Schooling_sq_GDP <- test_standardized$Schooling_sq * test_standardized$GDP_per_capita
 
-
 required_predictors <- names(coef(final_model_reduced))[-1]  # Exclude intercept
-test_final <- test_standardized[, c("Life_expectancy", required_predictors)]
+#test_final <- test_standardized[, c("Life_expectancy", required_predictors)]
 
 ncol(test_standardized)
 # Get predictors from the reduced model
@@ -572,11 +494,7 @@ required_predictors <- names(coef(final_model_reduced))[-1]
 missing_cols <- setdiff(required_predictors, names(test_standardized))
 cat("Missing columns in test data:", missing_cols, "\n")
 
-
-# --------------------------
 # STEP 1: List and Compare Columns
-# --------------------------
-
 # Get column names from test data
 test_cols <- names(test_standardized)
 cat("Test dataset columns (", length(test_cols), "):\n", paste(test_cols, collapse = ", "), "\n\n")
@@ -585,10 +503,7 @@ cat("Test dataset columns (", length(test_cols), "):\n", paste(test_cols, collap
 model_cols <- names(coef(final_model_reduced))[-1]
 cat("Model predictors (", length(model_cols), "):\n", paste(model_cols, collapse = ", "), "\n\n")
 
-# --------------------------
 # STEP 2: Identify Mismatches
-# --------------------------
-
 # Find missing columns in test data
 missing_cols <- setdiff(model_cols, test_cols)
 cat("Missing columns in test data:\n", paste(missing_cols, collapse = ", "), "\n\n")
@@ -597,10 +512,7 @@ cat("Missing columns in test data:\n", paste(missing_cols, collapse = ", "), "\n
 extra_cols <- setdiff(test_cols, c("Life_expectancy", model_cols))
 cat("Extra columns in test data:\n", paste(extra_cols, collapse = ", "), "\n\n")
 
-# --------------------------
 # STEP 3: Fix Column Issues
-# --------------------------
-
 # Add missing columns (set to 0 for dummy variables)
 for(col in missing_cols) {
   if(grepl("Region", col)) {
@@ -619,31 +531,19 @@ for(col in missing_cols) {
 # Remove extra columns
 test_standardized <- test_standardized[, !(names(test_standardized) %in% extra_cols)]
 
-# --------------------------
 # STEP 4: Create Final Test Set
-# --------------------------
-
 # Verify target variable exists
 if(!"Life_expectancy" %in% names(test_standardized)) {
   stop("Life_expectancy column missing in test data!")
 }
-
 # Create final test dataset
 test_final <- test_standardized[, c("Life_expectancy", model_cols)]
-
-# --------------------------
 # STEP 5: Final Verification
-# --------------------------
-
 cat("\nFinal test dataset structure:\n")
 str(test_final[, 1:5])  # Show first 5 columns for preview
 
 cat("\nMissing columns after fix:", setdiff(model_cols, names(test_final)), "\n")
 cat("Extra columns after fix:", setdiff(names(test_final), c("Life_expectancy", model_cols)), "\n")
-
-
-ncol(test_final)
-
 
 # Print column names in test data
 cat("Test columns:", names(test_final), "\n")
@@ -676,12 +576,3 @@ test_r2 <- cor(test_pred, test_final$Life_expectancy)^2
 cat("\nFinal Test Performance:\n")
 cat("RMSE:", round(test_rmse, 4), "\n")
 cat("R-squared:", round(test_r2, 4), "\n")
-
-ncol(test_final)
-
-summary(final_model_reduced)
-summary(test_final)
-
-test_final$`Region_North America` <- NULL
-summary(test_final)
-ncol(test_final)
